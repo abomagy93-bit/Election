@@ -1,0 +1,44 @@
+rules_version = '2';
+// Main rules file
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive Helpers
+    // We allow anonymous users to vote, so we just check if they have a non-null auth token.
+    function isSignedIn() { return request.auth != null; }
+
+    // Validation Blueprint for Vote
+    function isValidVote(data) {
+      return data.keys().hasAll(['name', 'nameId', 'vote', 'createdAt'])
+        && data.keys().size() == 4
+        && data.name is string && data.name.size() > 2 && data.name.size() <= 60
+        && data.nameId is string && data.nameId.size() > 2 && data.nameId.size() <= 60
+        && (data.vote == 'مقاطع' || data.vote == 'غير مقاطع')
+        && data.createdAt == request.time;
+    }
+
+    // Path Variable checks
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+
+    match /votes/{voteId} {
+      // Allow public read of results
+      allow read: if true;
+      
+      // Allow creation of a vote with valid data, and using nameId as ID
+      // This prevents the same nameId from being voted twice because of how Set/Create works 
+      // in SDK (AddDoc / SetDoc without overwrite) or we can just ensure the document doesn't already exist.
+      allow create: if isValidId(voteId)
+        && isValidVote(request.resource.data) 
+        && voteId == request.resource.data.nameId;
+      
+      // No updates or deletes allowed. Immutable once cast.
+      allow update, delete: if false;
+    }
+  }
+}

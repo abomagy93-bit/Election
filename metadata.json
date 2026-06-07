@@ -1,0 +1,6 @@
+{
+  "name": "استفتاء الانتخابات",
+  "description": "استفتاء على المشاركة في انتخابات مجلس الإدارة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

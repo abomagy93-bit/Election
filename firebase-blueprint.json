@@ -1,0 +1,36 @@
+{
+  "entities": {
+    "Vote": {
+      "title": "Vote",
+      "description": "A single user's vote in the election.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The voter's full name"
+        },
+        "nameId": {
+          "type": "string",
+          "description": "Normalized version of the name used as the document ID to prevent duplicate names."
+        },
+        "vote": {
+          "type": "string",
+          "enum": ["مقاطع", "غير مقاطع"],
+          "description": "The choice made by the voter."
+        },
+        "createdAt": {
+          "type": "timestamp"
+        }
+      },
+      "required": ["name", "nameId", "vote", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/votes/{voteId}": {
+      "schema": {
+        "$ref": "#/entities/Vote"
+      },
+      "description": "The collection of all public votes."
+    }
+  }
+}
