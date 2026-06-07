@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, setDoc, doc } from 'firebase/firestore';
 import { db } from './firebase';
-import { Loader2, Radio, CheckCircle2, User, Link as LinkIcon, AlertCircle, Play, Pause, Volume2 } from 'lucide-react';
+import { Loader2, Radio, CheckCircle2, User, Link as LinkIcon, AlertCircle, Play, Pause, Volume2, Download } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -34,7 +34,12 @@ export default function App() {
   const [selectedVote, setSelectedVote] = useState<VoteChoice | ''>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorLine, setErrorLine] = useState('');
-  const [hasVoted, setHasVoted] = useState(false);
+  const [hasVoted, setHasVoted] = useState(() => {
+    return localStorage.getItem('votedState') === 'true';
+  });
+  const [savedUserName, setSavedUserName] = useState(() => {
+    return localStorage.getItem('voterName') || '';
+  });
   
   const [votes, setVotes] = useState<VoteRecord[]>([]);
   const [isLoadingVotes, setIsLoadingVotes] = useState(true);
@@ -55,11 +60,18 @@ export default function App() {
 
   useEffect(() => {
     const q = query(collection(db, 'votes'), orderBy('createdAt', 'desc'));
-    const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-      const docsData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as VoteRecord[];
+    const unsubscribeSnapshot = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
+      const docsData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          name: data.name || 'مجهول',
+          nameId: data.nameId || '',
+          vote: data.vote || '-',
+          createdAt: data.createdAt, // can be null while pending
+          isPending: doc.metadata.hasPendingWrites
+        };
+      }) as (VoteRecord & { isPending: boolean })[];
       setVotes(docsData);
       setIsLoadingVotes(false);
     }, (error) => {
@@ -67,9 +79,7 @@ export default function App() {
       setIsLoadingVotes(false);
     });
 
-    return () => {
-      unsubscribeSnapshot();
-    };
+    return () => unsubscribeSnapshot();
   }, []);
 
   const handleVote = async (e: React.FormEvent) => {
@@ -100,21 +110,22 @@ export default function App() {
     setErrorLine('');
 
     try {
-      // Using setDoc with the customized nameId prevents duplicate entries
-      const voteRef = doc(db, 'votes', nameId);
-      await setDoc(voteRef, {
+      await addDoc(collection(db, 'votes'), {
         name: name.trim(),
         nameId: nameId,
         vote: selectedVote,
         createdAt: serverTimestamp()
       });
       setHasVoted(true);
+      setSavedUserName(name.trim());
+      localStorage.setItem('votedState', 'true');
+      localStorage.setItem('voterName', name.trim());
     } catch (error: any) {
       console.error("Voting error", error);
       if (error.code === 'permission-denied') {
-        setErrorLine('عذراً، لا يمكن التصويت بنفس الاسم أو حدث خطأ في الصلاحيات.');
+        setErrorLine('عذراً، لا يمكن التصويت بنفس الاسم لقد قمت بالتصويت مسبقا.');
       } else {
-        setErrorLine('حدث خطأ غير معروف، يرجى المحاولة مرة أخرى.');
+        setErrorLine(`حدث خطأ أثناء الحفظ. (السبب: ${error.message || 'خطأ غير معروف'})`);
       }
     } finally {
       setIsSubmitting(false);
@@ -126,6 +137,33 @@ export default function App() {
   const totalVotes = votes.length;
   const boycottingPercent = totalVotes > 0 ? Math.round((boycottingCount / totalVotes) * 100) : 0;
   const notBoycottingPercent = totalVotes > 0 ? 100 - boycottingPercent : 0;
+
+  const exportToCSV = () => {
+    // Add BOM for UTF-8 to work correctly with Excel
+    const BOM = "\uFEFF";
+    
+    let csvContent = BOM + "م,الاسم,الموقف,التاريخ\n";
+    
+    votes.forEach((v, idx) => {
+      const dateStr = v.isPending ? 'جاري الإرسال' : (v.createdAt?.toDate ? v.createdAt.toDate().toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) : 'الآن');
+      const row = [
+        idx + 1,
+        `"${v.name}"`,
+        `"${v.vote}"`,
+        `"${dateStr}"`
+      ].join(",");
+      csvContent += row + "\n";
+    });
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `نتائج_الاستفتاء_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans overflow-hidden" dir="rtl">
@@ -257,6 +295,7 @@ export default function App() {
                   <CheckCircle2 className="w-8 h-8 text-emerald-600" />
                 </div>
                 <h2 className="text-xl font-bold text-slate-800 mb-2">تم تسجيل تصويتك بنجاح!</h2>
+                {savedUserName && <p className="text-lg text-indigo-700 font-semibold mb-2">{savedUserName}</p>}
                 <p className="text-slate-500 text-sm">شكراً لمشاركتك في هذا الاستفتاء.</p>
               </div>
             )}
@@ -290,6 +329,15 @@ export default function App() {
             <div className="p-6 border-b border-slate-100 flex justify-between items-center shrink-0">
               <h2 className="text-lg font-semibold text-slate-700">جدول المشاركين (سجل دائم)</h2>
               <div className="flex gap-2">
+                <button 
+                  onClick={exportToCSV}
+                  disabled={votes.length === 0}
+                  className="flex items-center gap-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors border border-indigo-200 disabled:opacity-50"
+                  title="تصدير النتائج كملف إكسيل CSV"
+                >
+                  <Download className="w-4 h-4" />
+                  تصدير CSV
+                </button>
                 <span className="bg-slate-100 text-slate-500 px-3 py-1 rounded-md text-xs font-mono select-all"># {new Date().getFullYear()}-VOTE</span>
               </div>
             </div>
@@ -334,7 +382,11 @@ export default function App() {
                           </span>
                         </td>
                         <td className="p-4 text-left text-slate-400 text-xs font-mono" dir="ltr">
-                          {v.createdAt?.toDate ? v.createdAt.toDate().toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) : 'الآن'}
+                            {v.isPending ? (
+                              <span className="text-amber-500 font-bold text-[10px]">🔄 جاري...</span>
+                            ) : (
+                              v.createdAt?.toDate ? v.createdAt.toDate().toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) : 'الآن'
+                            )}
                         </td>
                       </tr>
                     ))
